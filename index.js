@@ -1,27 +1,56 @@
-//JotaroKujo0525 note, this is a deed that i should've done a long time ago
-require('dotenv').config()
+require('dotenv').config();
+const { Client, GatewayIntentBits, Collection } = require('discord.js');
+const fs = require('fs');
+const mongoose = require('mongoose');
+const { DisTube } = require('distube');
+const { SpotifyPlugin } = require('@distube/spotify');
+const logger = require('./utils/logger');
 
-const DiscordMusicBot = require("./lib/DiscordMusicBot");
-const { exec } = require("child_process");
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
+});
 
-if (process.env.REPL_ID) {
-	console.log("Replit system detected, initiating special `unhandledRejection` event listener.")
-	process.on('unhandledRejection', (reason, promise) => {
-		promise.catch((err) => {
-			if (err.status === 429) {
-				console.log("something went wrong whilst trying to connect to discord gateway, resetting...");
-				exec("kill 1");
-			}
-		});
-	});
+client.commands = new Collection();
+client.cooldowns = new Collection();
+
+// Command loader
+const commandFolders = fs.readdirSync('./commands');
+for (const folder of commandFolders) {
+  const commandFiles = fs.readdirSync(`./commands/${folder}`).filter(file => file.endsWith('.js'));
+  for (const file of commandFiles) {
+    const command = require(`./commands/${folder}/${file}`);
+    client.commands.set(command.data.name, command);
+  }
 }
 
-const client = new DiscordMusicBot();
+// Event loader
+const eventFolders = fs.readdirSync('./events');
+for (const folder of eventFolders) {
+  const eventFiles = fs.readdirSync(`./events/${folder}`).filter(file => file.endsWith('.js'));
+  for (const file of eventFiles) {
+    const event = require(`./events/${folder}/${file}`);
+    if (event.once) {
+      client.once(event.name, (...args) => event.execute(...args, client));
+    } else {
+      client.on(event.name, (...args) => event.execute(...args, client));
+    }
+  }
+}
 
-console.log("Make sure to fill in the config.js before starting the bot.");
+// DisTube
+client.distube = new DisTube(client, {
+  leaveOnEmpty: false,
+  leaveOnFinish: false,
+  plugins: [new SpotifyPlugin()]
+});
 
-const getClient = () => client;
-
-module.exports = {
-	getClient,
-};
+// Connect to MongoDB
+mongoose.connect(process.env.MONGO_URI).then(() => {
+  logger.success('Connected to MongoDB');
+  client.login(process.env.TOKEN);
+}).catch(err => logger.error(err));
